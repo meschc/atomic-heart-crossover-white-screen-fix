@@ -150,7 +150,7 @@ shasum -a 256 "$DLL"
 Внутриигровые ролики Atomic Heart играет плеер Unreal Engine 4.27 (ElectraPlayer) через Media Foundation, а CrossOver декодирует H.264 своим `winegstreamer`. Сходятся три проблемы:
 
 1. **CrossOver прячет NV12 на macOS.** В `winegstreamer` есть хак: если система — Darwin, декодер H.264 не предлагает выходной формат NV12, а плеер игры ждёт именно его.
-2. **Кадр не влезает в буфер.** Декодер выравнивает плоскости кадра (`output_plane_align = 15`). Из-за этого кадр 1920×1080 становится 1920×1088, то есть 3 133 440 байт. Игра выделяет буфер ровно под 1920×1080, это 3 110 400 байт. Декодер пишет `Output buffer is too small`, возвращает `STATUS_BUFFER_TOO_SMALL` (в логе видно как `0xD0000023`) и останавливается. Текстура остаётся белой, а звук идёт отдельным потоком и играет дальше.
+2. **Кадр не влезает в буфер.** Декодер выравнивает плоскости кадра (`output_plane_align = 15`). Из-за этого кадр 1920×1080 становится 1920×1088, то есть 3 133 440 байт. Буфер, который даёт игра, меньше: судя по всему, он рассчитан на обычный кадр 1920×1080, это 3 110 400 байт. Декодер пишет `Output buffer is too small`, возвращает `STATUS_BUFFER_TOO_SMALL` (по коду Wine игре это приходит как `0xD0000023`) и останавливается. Текстура остаётся белой, а звук идёт отдельным потоком и играет дальше.
 3. **Лишняя D3D-совместимость.** Декодер объявляет себя D3D-aware, и игра может пытаться получать кадры сразу в видеотекстурах. Эти флаги выключены по примеру MacGameVideoFix и winevideo, чтобы кадры шли через обычную память. Без этой правки фикс отдельно не проверяли.
 
 Скрипт не привязан к смещениям. Каждое место он находит по шаблону байт и проверяет смысл:
@@ -279,8 +279,8 @@ HardwareAcceleratedVideoDecoding=False
 
 In-game videos go through UE 4.27 ElectraPlayer → Media Foundation → winegstreamer's H.264 decoder.
 
-1. CrossOver's H.264 decoder skips the NV12 output type when `uname` reports `Darwin` (`CW HACK 26265` in CrossOver's Wine source; trace: `Skipping NV12 output format`). Electra requires NV12. Patch: `jne` → `jmp`.
-2. `h264_decoder_create` sets `output_plane_align = 15`, so 1920×1080 NV12 is padded to 1920×1088 (3,133,440 bytes). Electra supplies tightly packed 1920×1080 samples (3,110,400 bytes). The unix side logs `Output buffer is too small` and returns `STATUS_BUFFER_TOO_SMALL` (logged as HRESULT `0xD0000023`), and Electra stops the video decoder while audio continues. Patch: alignment `15` → `0`.
+1. CrossOver's H.264 decoder skips the NV12 output type on macOS (`CW HACK 26265` in CrossOver's Wine source; trace: `Skipping NV12 output format`). Electra requires NV12. Patch: `jne` → `jmp`.
+2. `h264_decoder_create` sets `output_plane_align = 15`, so 1920×1080 NV12 is padded to 1920×1088 (3,133,440 bytes). The output buffer Electra provides is smaller; it is not logged, but it is at least 3,110,400 bytes (a tightly packed 1920×1080 frame), since alignment 0 works. The unix side logs `Output buffer is too small` and returns `STATUS_BUFFER_TOO_SMALL` (per the code, the caller gets HRESULT `0xD0000023`; this value is not in our logs), and the video stays white while audio continues. Patch: alignment `15` → `0`.
 3. `video_decoder_create_with_types` sets `MF_SA_D3D_AWARE` and `MF_SA_D3D11_AWARE` to 1, which may steer Electra to a D3D texture path. Patch: both set to `0`, so frames use system-memory buffers. This follows MacGameVideoFix and winevideo; the fix was not tested without this change.
 
 The script locates each site by byte pattern plus semantic checks: NV12 GUID and `Darwin` string references, the AWARE attribute GUIDs, and a call to the decoder constructor. It refuses to change anything unless each site matches exactly once.
