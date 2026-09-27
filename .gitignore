@@ -1,0 +1,7 @@
+# Бэкапы и сами DLL не публикуем: это файлы CrossOver
+backups/
+*.dll
+*.orig
+*.new
+.DS_Store
+__pycache__/
